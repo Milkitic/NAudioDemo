@@ -1,11 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -23,7 +17,7 @@ namespace SimplePlayer
 
         private CancellationTokenSource _cts;
 
-        private bool _sliderLock;
+        private bool _sliderLock; // 逻辑锁，当为true时不更新界面上的进度
 
         public FormPlayer()
         {
@@ -63,8 +57,8 @@ namespace SimplePlayer
 
                 if (!File.Exists(fileName))
                     throw new FileNotFoundException("所选文件不存在");
-                _device = new WaveOutEvent();
-                _reader = new AudioFileReader(fileName);
+                _device = new WaveOutEvent(); // Create device
+                _reader = new AudioFileReader(fileName); // Create reader
 
                 // dsp start
                 _volumeProvider = new VolumeSampleProvider(_reader)
@@ -74,13 +68,15 @@ namespace SimplePlayer
                 // dsp end
 
                 _device.Init(_volumeProvider);
+                //_device.Init(_reader); // 之前是reader，现改为VolumeSampleProvider
+                // https://stackoverflow.com/questions/46433790/how-to-chain-together-multiple-naudio-isampleprovider-effects
 
-                var duration = _reader.TotalTime;
+                var duration = _reader.TotalTime; // 总时长
                 sliderProgress.Maximum = (int)duration.TotalMilliseconds;
                 lblDuration.Text = duration.ToString(@"mm\:ss");
 
                 _cts = new CancellationTokenSource();
-                StartUpdateProgress();
+                StartUpdateProgress(); // 界面更新线程
 
                 _device.PlaybackStopped += Device_OnPlaybackStopped;
             }
@@ -93,27 +89,29 @@ namespace SimplePlayer
 
         private void sliderProgress_MouseDown(object sender, MouseEventArgs e)
         {
-            _sliderLock = true;
+            _sliderLock = true; // 拖动开始，停止更新界面
         }
 
         private void sliderProgress_MouseUp(object sender, MouseEventArgs e)
         {
+            // 释放鼠标时，应用目标进度
             _reader.CurrentTime = TimeSpan.FromMilliseconds(sliderProgress.Value);
             UpdateProgress();
-            _sliderLock = false;
+            _sliderLock = false; // 拖动结束，恢复更新界面
         }
 
         private void sliderProgress_ValueChanged(object sender, EventArgs e)
         {
             if (_sliderLock)
             {
+                // 拖动时可以直观看到目标进度
                 lblPosition.Text = TimeSpan.FromMilliseconds(sliderProgress.Value).ToString(@"mm\:ss");
             }
         }
 
         private void sliderVolume_ValueChanged(object sender, EventArgs e)
         {
-            SetVolume();
+            UpdateVolume();
         }
 
         private void Form_Load(object sender, EventArgs e)
@@ -133,12 +131,14 @@ namespace SimplePlayer
 
         private void StartUpdateProgress()
         {
+            // 此处可用Timer完成而不是手动循环，但不建议使用UI线程上的Timer
             Task.Run(() =>
             {
                 while (!_cts.IsCancellationRequested)
                 {
                     if (_device.PlaybackState == PlaybackState.Playing)
                     {
+                        // 若为播放状态，持续更新界面
                         BeginInvoke(new Action(UpdateProgress));
                         Thread.Sleep(100);
                     }
@@ -169,7 +169,7 @@ namespace SimplePlayer
 
         private void UpdateProgress()
         {
-            var currentTime = _reader?.CurrentTime ?? TimeSpan.Zero;
+            var currentTime = _reader?.CurrentTime ?? TimeSpan.Zero; // 当前时间
             Console.WriteLine(currentTime);
 
             if (!_sliderLock)
@@ -179,9 +179,11 @@ namespace SimplePlayer
             }
         }
 
-        private void SetVolume()
+        private void UpdateVolume()
         {
-            _volumeProvider.Volume = sliderVolume.Value / 100f;
+            var volume = sliderVolume.Value / 100f;
+            //_volumeProvider.Volume = volume; // 注释这一句
+            if (_device != null) _device.Volume = volume;
         }
 
         private void DisposeDevice()
